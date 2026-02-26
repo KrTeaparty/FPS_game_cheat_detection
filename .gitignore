@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# VS Code / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Large Model / Data Files
+*.pth
+*.pt
+*.ckpt
+
+# Project specifics
+raw_data/
+# Feature directories filtering
+cs2_feat_*/
+!cs2_feat_8_*/
+!cs2_feat_16_*/
+outputs/
+backup_before_cleaning/
+
+# Data directory filtering
+data/*
+!data/Clip_match/
+!Sample_data/
+
+# List directory filtering
+list/*
+!list/cs2_feat_8_ft*.list
+!list/cs2_feat_16_ft*.list
+
+# Models directory filtering
+models/*
+!models/cs2_feat_8_ft*[^_]_2025.pkl
+!models/cs2_feat_16_ft*[^_]_2025.pkl
