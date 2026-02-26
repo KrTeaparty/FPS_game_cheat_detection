@@ -39,8 +39,9 @@ var/
 raw_data/
 # Feature directories filtering
 cs2_feat_*/
-!cs2_feat_8_ft0.z*
-!cs2_feat_8_ft0.zip
+compressed_features/*
+!compressed_features/cs2_feat_8_ft0.z*
+!compressed_features/cs2_feat_8_ft0.zip
 outputs/
 backup_before_cleaning/
 
