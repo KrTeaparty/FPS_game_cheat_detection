@@ -39,14 +39,13 @@ var/
 raw_data/
 # Feature directories filtering
 cs2_feat_*/
-!cs2_feat_8_*/
-!cs2_feat_16_*/
+!cs2_feat_8_ft0.z*
+!cs2_feat_8_ft0.zip
 outputs/
 backup_before_cleaning/
 
 # Data directory filtering
 data/*
-!data/Clip_match/
 !Sample_data/
 
 # List directory filtering

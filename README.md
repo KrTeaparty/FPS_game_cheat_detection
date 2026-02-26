@@ -15,7 +15,7 @@ This repository provides the core training and testing code for detecting cheats
 ```
 ├── list/                                    # Text files containing data paths for data loaders
 ├── models/                                  # Pre-trained models and saved weights
-├── cs2_feat_.../                            # Extracted 1024-d spatiotemporal features (Stride 8, 16)
+├── cs2_feat_8_ft0.zip (.z01~.z17)           # Split archive containing all extracted features & clip mappings
 ├── Sample_data/                             # Blurred/anonymized sample .mp4 videos
 ├── auto_train_5fold.py                      # Main script: 5-Fold Cross Validation Training & Evaluation
 ├── train.py / cs_test.py                    # Core training/testing loops and loss definitions
@@ -29,8 +29,9 @@ This repository provides the core training and testing code for detecting cheats
 
 ## Dataset & Models Preparation
 
-1. **Features & Maps (`cs2_feat_.../`, `list/`)**
+1. **Features & Maps (`cs2_feat_8_ft0.zip`, `list/`)**
    We have included the extracted video features `.npy` and map lists (strides 8, 16) in this repository so you can reproduce the results immediately.
+   Due to GitHub's directory file limits, all features (`cs2_feat_*`) and clip match data (`data/Clip_match`) have been bundled into a single split zip archive named `cs2_feat_8_ft0` (`.zip`, `.z01` to `.z17`). Please extract this multi-part archive into the project root directory before running the code.
    * Note on naming conventions: `ft0` indicates features extracted without fine-tuning, while `ft1` indicates features extracted with a fine-tuned model.
 2. **Pre-trained Weights & Models (`models/`, `pth`)**
    The best performing evaluations for strides 8 and 16 under both fine-tuning setups are provided in the `models/` directory. If you wish to extract features yourself from new `.mp4` videos, you can use the included compressed `best_i3d_model_v3.zip` backbone (please extract it to obtain the `.pth` file before use).
