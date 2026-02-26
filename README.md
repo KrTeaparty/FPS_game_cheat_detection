@@ -21,7 +21,7 @@ This repository provides the core training and testing code for detecting cheats
 ├── train.py / cs_test.py                    # Core training/testing loops and loss definitions
 ├── i3d_finetuning.py                        # I3D feature extraction script
 ├── model.py                                 # Core Cheat Detection Network Architecture Architecture
-├── best_i3d_model_v3.pth                    # Pre-trained I3D backbone weight used for feature extraction
+├── best_i3d_model_v3.zip                    # Compressed pre-trained I3D backbone weight used for feature extraction
 └── requirements.txt                         # Package dependencies
 ```
 
@@ -33,7 +33,7 @@ This repository provides the core training and testing code for detecting cheats
    We have included the extracted video features `.npy` and map lists (strides 8, 16) in this repository so you can reproduce the results immediately.
    * Note on naming conventions: `ft0` indicates features extracted without fine-tuning, while `ft1` indicates features extracted with a fine-tuned model.
 2. **Pre-trained Weights & Models (`models/`, `pth`)**
-   The best performing evaluations for strides 8 and 16 under both fine-tuning setups are provided in the `models/` directory. If you wish to extract features yourself from new `.mp4` videos, you can use the included `best_i3d_model_v3.pth` backbone.
+   The best performing evaluations for strides 8 and 16 under both fine-tuning setups are provided in the `models/` directory. If you wish to extract features yourself from new `.mp4` videos, you can use the included compressed `best_i3d_model_v3.zip` backbone (please extract it to obtain the `.pth` file before use).
 3. **Sample Videos (`Sample_data/`)**
    A set of blurred/anonymized sample game clips (`.mp4`) showcasing Bot behavior is available in the `Sample_data` directory.
 
