@@ -54,7 +54,7 @@ python auto_train_5fold.py
 ```
 This script will automatically:
 * Load data list from the `list/` directory.
-* Iterate over different strides (8, 16) and feature types (`ft0`, `ft1`).
+* Iterate over different strides (8, 16) and fine-tuning configurations (`ft0` for no fine-tuning, `ft1` for fine-tuning).
 * Perform 5-Fold evaluation and output `Accuracy`, `Precision`, `Recall`, and `F1-Score`.
 * Save the best performing models into the `models/` directory.
 
