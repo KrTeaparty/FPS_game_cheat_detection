@@ -1,21 +1,21 @@
 import os
-from model import *
-from train import *
-from cs_test import test
-from tqdm import tqdm
-import pdb
+import torch
 import numpy as np
 import torch.utils.data as data
-import utils
-from utils import *
-import os
-from options import init_args
-import matplotlib.pyplot as plt
-import pandas as pd
+from sklearn.metrics import f1_score, precision_score, recall_score
 import pickle
+import math
+from tqdm import tqdm
+from model import *
+from train import *
+import utils
+from options import init_args
 
 class CS2_dataloader(data.DataLoader):
-    def __init__(self, root_dir, modal, mode, num_segments, len_feature, list_fname, train_idx=None, test_idx=None, seed=-1, is_normal=None):
+    # 전역 캐시 딕셔너리 (메모리에 유지)
+    feature_cache = {}
+
+    def __init__(self, root_dir, modal, mode, num_segments, len_feature, list_fname, idx_list=None, seed=-1, is_normal=None):
         if seed >= 0:
             utils.set_seed(seed)
         self.mode = mode
@@ -23,261 +23,221 @@ class CS2_dataloader(data.DataLoader):
         self.num_segments = num_segments
         self.len_feature = len_feature
 
-        if self.mode == "Train":
-            data_path = os.path.join('list','{}_{}.list'.format(list_fname, 'Normal' if is_normal is True else 'Bot'))
-            data_file = open(data_path, 'r')
-            self.vid_list = []
-            for line in data_file:
-                self.vid_list.append(line.split())
-            data_file.close()
+        data_path = os.path.join('list', '{}_{}.list'.format(list_fname, 'Normal' if is_normal else 'Bot'))
+        with open(data_path, 'r') as f:
+            full_list = [line.strip().split() for line in f]
             
-            self.vid_list = [self.vid_list[idx] for idx in train_idx]
+        if idx_list is not None:
+            self.vid_list = [full_list[i] for i in idx_list]
+        else:
+            self.vid_list = full_list
 
-        elif self.mode == "Test":
-            self.vid_list = []
-            for i, v in enumerate(["Normal", "Bot"]):
-                data_path = os.path.join('list', '{}_{}.list'.format(list_fname, v))
-                data_file = open(data_path, 'r')
-                tmp_list = []
-                for line in data_file:
-                    tmp_list.append(line.split())
-                data_file.close()
-                
-                tmp_list = [tmp_list[idx] for idx in test_idx[i]]
-                self.vid_list.extend(tmp_list)
+        # RAM에 모두 사전 로드 (I/O 병목 제거)
+        for vid_info in self.vid_list:
+            path = vid_info[0]
+            if path not in CS2_dataloader.feature_cache:
+                CS2_dataloader.feature_cache[path] = np.load(path).astype(np.float32)
 
     def __len__(self):
         return len(self.vid_list)
 
     def __getitem__(self, index):
-        
-        if self.mode == "Test":
-            data,label,name = self.get_data(index)
-            return data,label,name
-        else:
-            data,label = self.get_data(index)
-            return data,label
-
-    def get_data(self, index):
         vid_info = self.vid_list[index][0]  
-        name = vid_info.split("/")[-1].split(".npy")[0]
-        video_feature = np.load(vid_info).astype(np.float32)   
-        if "Normal" in vid_info.split("/")[-2]:
-            label = 0
-        else:
-            label = 1
+        name = os.path.basename(vid_info).split(".npy")[0]
+        # 디스크가 아닌 메모리 캐시에서 직접 읽기
+        video_feature = CS2_dataloader.feature_cache[vid_info]
+
+        
+        label = 0 if "Normal" in vid_info else 1
+        
         if self.mode == "Train":
             new_feat = np.zeros((self.num_segments, video_feature.shape[1])).astype(np.float32)
-            r = np.linspace(0, len(video_feature), self.num_segments + 1, dtype = int)
+            r = np.linspace(0, len(video_feature), self.num_segments + 1, dtype=int)
             for i in range(self.num_segments):
                 if r[i] != r[i+1]:
                     new_feat[i,:] = np.mean(video_feature[r[i]:r[i+1],:], 0)
                 else:
                     new_feat[i:i+1,:] = video_feature[r[i]:r[i]+1,:]
             video_feature = new_feat
+            
         if self.mode == "Test":
             return video_feature, label, name      
         else:
             return video_feature, label    
 
-from sklearn.metrics import f1_score, precision_score, recall_score
-
-def test(net, config, test_loader, test_info, step, stride, model_file = None):
+def test(net, config, test_loader, test_info, step, stride, model_file=None):
     with torch.no_grad():
         net.eval()
         net.flag = "Test"
         if model_file is not None:
             net.load_state_dict(torch.load(model_file))
 
-        load_iter = iter(test_loader)
-        frame_predict = None
-        
         cls_label = []
-        cls_pre = []
-        temp_predict = torch.zeros((0)).cuda()
-        name_l = []
+        cls_pre_05 = []
+        cls_pre_08 = []
         
-        for i in range(len(test_loader.dataset)):
-            _data, _label, _name = next(load_iter)
-            name_l.append(_name)
-            
+        for _data, _label, _name in test_loader:
             _data = _data.cuda()
-            _label = _label.cuda()
-            
             res = net(_data)   
-            a_predict = res["frame"]
-            cls_label.append(int(_label))
-            a_predict = a_predict.mean(0).cpu().numpy()
+            a_predict = res["frame"].mean(0).cpu().numpy()
             
-            cls_pre.append(1 if a_predict.max()>0.9 else 0)          
-            fpre_ = np.repeat(a_predict, stride)
-            if frame_predict is None:         
-                frame_predict = fpre_
-            else:
-                frame_predict = np.concatenate([frame_predict, fpre_])  
-    
-        corrent_num = np.sum(np.array(cls_label) == np.array(cls_pre), axis=0)
-        accuracy = corrent_num / (len(cls_pre))
-        f1 = f1_score(cls_label, cls_pre)
-        precision = precision_score(cls_label, cls_pre, zero_division=1)
-        recall = recall_score(cls_label, cls_pre)
+            cls_label.append(int(_label))
+            
+            max_score = a_predict.max()
+            cls_pre_05.append(1 if max_score > 0.5 else 0)
+            cls_pre_08.append(1 if max_score > 0.8 else 0)
+
+        # Evaluate 0.5
+        acc_05 = np.mean(np.array(cls_label) == np.array(cls_pre_05))
+        f1_05 = f1_score(cls_label, cls_pre_05, zero_division=0)
+        pre_05 = precision_score(cls_label, cls_pre_05, zero_division=0)
+        rec_05 = recall_score(cls_label, cls_pre_05, zero_division=0)
+
+        # Evaluate 0.8
+        acc_08 = np.mean(np.array(cls_label) == np.array(cls_pre_08))
+        f1_08 = f1_score(cls_label, cls_pre_08, zero_division=0)
+        pre_08 = precision_score(cls_label, cls_pre_08, zero_division=0)
+        rec_08 = recall_score(cls_label, cls_pre_08, zero_division=0)
 
         test_info["step"].append(step)
-        test_info["f1"].append(f1)
-        test_info["precision"].append(precision)
-        test_info["recall"].append(recall)
-        test_info["ac"].append(accuracy)
-        test_data_name = dict(zip(name_l, cls_label))
-        return test_data_name
+        
+        test_info["ac_05"].append(acc_05)
+        test_info["f1_05"].append(f1_05)
+        test_info["precision_05"].append(pre_05)
+        test_info["recall_05"].append(rec_05)
+        
+        test_info["ac_08"].append(acc_08)
+        test_info["f1_08"].append(f1_08)
+        test_info["precision_08"].append(pre_08)
+        test_info["recall_08"].append(rec_08)
+        
+        return acc_05 # Return acc_05 as the primary metric for saving best model
 
-
+def save_best_record(test_info, file_path):
+    with open(file_path, "w") as fo:
+        fo.write(f"Step: {test_info['step'][-1]}\n")
+        fo.write(f"--- Threshold 0.5 ---\n")
+        fo.write(f"ac: {test_info['ac_05'][-1]:.4f}\n")
+        fo.write(f"f1: {test_info['f1_05'][-1]:.4f}\n")
+        fo.write(f"precision: {test_info['precision_05'][-1]:.4f}\n")
+        fo.write(f"recall: {test_info['recall_05'][-1]:.4f}\n")
+        fo.write(f"--- Threshold 0.8 ---\n")
+        fo.write(f"ac: {test_info['ac_08'][-1]:.4f}\n")
+        fo.write(f"f1: {test_info['f1_08'][-1]:.4f}\n")
+        fo.write(f"precision: {test_info['precision_08'][-1]:.4f}\n")
+        fo.write(f"recall: {test_info['recall_08'][-1]:.4f}\n")
 
 if __name__ == '__main__':
+    args = init_args()
+    
+    # Load GKF splits
+    with open("gkf_splits/gkf_5fold_idx.pickle", "rb") as f:
+        gkf_splits = pickle.load(f)
+        
     for ft in [0, 1]:
-        if ft:
-            num_ab = 2131
-            num_n = 1449
-        else:
-            num_ab = 2252
-            num_n = 1741
-
-        class Config(object):
-            def __init__(self, args):
-                self.root_dir = args['root_dir']
-                self.modal = args['modal']
-                self.lr = eval(args['lr'])
-                self.num_iters = len(self.lr)    
-                self.len_feature = 1024 
-                self.batch_size = args['batch_size']
-                self.model_path = args['model_path']
-                self.output_path = args['output_path']
-                self.num_workers = args['num_workers']
-                self.model_file = args['model_file']
-                self.seed = args['seed']
-                self.num_segments = args['num_segments']
-                self.num_abnormal = num_ab - 1
-                self.num_normal = num_n - 1
-
         for stride in [8, 16]:
-            args = init_args()
-            config = Config(args)
-            worker_init_fn = None
-            gpus = [0]
-            torch.cuda.set_device('cuda:{}'.format(gpus[0]))
-            if config.seed >= 0:
-                utils.set_seed(config.seed)
-                worker_init_fn = np.random.seed(config.seed)
-
-            abnormal_shuffled = np.random.permutation(config.num_abnormal)
-            normal_shuffled = np.random.permutation(config.num_normal)
-            abnormal_test_num = math.ceil(config.num_abnormal / 5) # 5-fold의 테스트 세트 크기
-            abnormal_train_num = config.num_abnormal - abnormal_test_num * 1 # 각 폴드에서 사용되는 훈련 세트의 (최대) 크기
-            normal_test_num = math.ceil(config.num_normal / 5)
-            normal_train_num = config.num_normal - normal_test_num * 1
+            print(f"========== Starting Train 5-fold (FT: {ft}, Stride: {stride}) ==========")
+            
+            # config setup
+            lr_list = eval(args['lr'])
+            num_iters = len(lr_list)
+            
             best_test_dict = {
-                "acc": [],
-                "precision": [],
-                "f1": [],
-                "recall": [],
+                "acc_05": [], "precision_05": [], "f1_05": [], "recall_05": [],
+                "acc_08": [], "precision_08": [], "f1_08": [], "recall_08": []
             }
-            print(f"Abnormal_train_num: {abnormal_train_num}")
-            print(f"Abnormal_test_num: {abnormal_test_num}")
-            print(f"Normal_train_num: {normal_train_num}")
-            print(f"Normal_test_num: {normal_test_num}")
-            for i in range(5):
-                start_ab = i * abnormal_test_num
-                end_ab = (i + 1) * abnormal_test_num
-                abnormal_test_idx = abnormal_shuffled[start_ab:end_ab]
-                abnormal_train_idx = np.concatenate([abnormal_shuffled[:start_ab], abnormal_shuffled[end_ab:]])
+            
+            for fold_idx in range(5):
+                print(f"--- Fold {fold_idx + 1} ---")
+                
+                normal_train_idx = gkf_splits["Normal"][fold_idx]["train_idx"]
+                normal_test_idx = gkf_splits["Normal"][fold_idx]["test_idx"]
+                abnormal_train_idx = gkf_splits["Bot"][fold_idx]["train_idx"]
+                abnormal_test_idx = gkf_splits["Bot"][fold_idx]["test_idx"]
+                
+                utils.set_seed(args['seed'] + fold_idx)
+                worker_init_fn = np.random.seed(args['seed'] + fold_idx)
 
-                start_n = i * normal_test_num
-                end_n = (i + 1) * normal_test_num
-                normal_test_idx = normal_shuffled[start_n:end_n]
-                normal_train_idx = np.concatenate([normal_shuffled[:start_n], normal_shuffled[end_n:]])
-
-                # 시드 설정
-                utils.set_seed(config.seed+i)
-                worker_init_fn = np.random.seed(config.seed+i)
-
-                # 모델 초기화
-                config.len_feature = 1024
-                net = WSAD(config.len_feature, flag = "Train", a_nums = 60, n_nums = 60, frame_window=16)
+                net = WSAD(input_size=1024, flag="Train", a_nums=60, n_nums=60, frame_window=16)
                 net = net.cuda()
 
-                # 데이터로더 초기화
-                list_path = f"cs2_feat_{stride}_{'ft1' if ft else 'ft0'}"
-                normal_train_loader = data.DataLoader(
-                    CS2_dataloader(root_dir = config.root_dir, mode = 'Train', modal = config.modal, num_segments = 1, 
-                        len_feature = config.len_feature, list_fname=list_path, train_idx = normal_train_idx, is_normal = True),
-                        batch_size = 64,
-                        shuffle = True, num_workers = config.num_workers,
-                        worker_init_fn = worker_init_fn, drop_last = True)
-                abnormal_train_loader = data.DataLoader(
-                    CS2_dataloader(root_dir = config.root_dir, mode = 'Train', modal = config.modal, num_segments = 1, 
-                        len_feature = config.len_feature, list_fname=list_path, train_idx = abnormal_train_idx, is_normal = False),
-                        batch_size = 64,
-                        shuffle = True, num_workers = config.num_workers,
-                        worker_init_fn = worker_init_fn, drop_last = True)
-                test_loader = data.DataLoader(
-                    CS2_dataloader(root_dir = config.root_dir, mode = 'Test', modal = config.modal, num_segments = config.num_segments, 
-                        len_feature = config.len_feature, list_fname=list_path, test_idx = [normal_test_idx, abnormal_test_idx], is_normal=True),
-                        batch_size = 1,
-                        shuffle = False, num_workers = config.num_workers,
-                        worker_init_fn = worker_init_fn)
-
-
-                # 지표, criterion, optimizer 초기화
-                test_info = {"step": [], "f1": [],"precision":[],"ac":[], "recall":[]}
+                list_path = f"cs2_feat_{stride}_ft{ft}"
                 
-                best_ac = 0
-                best_precision, best_recall, best_f1 = 0, 0, 0
-                cur_iter = 1
-                best_iter = 0
+                normal_train_loader = data.DataLoader(
+                    CS2_dataloader(root_dir=args['root_dir'], mode='Train', modal='RGB', num_segments=1, 
+                        len_feature=1024, list_fname=list_path, idx_list=normal_train_idx, is_normal=True),
+                        batch_size=64, shuffle=True, num_workers=args['num_workers'],
+                        worker_init_fn=worker_init_fn, drop_last=True)
+                        
+                abnormal_train_loader = data.DataLoader(
+                    CS2_dataloader(root_dir=args['root_dir'], mode='Train', modal='RGB', num_segments=1, 
+                        len_feature=1024, list_fname=list_path, idx_list=abnormal_train_idx, is_normal=False),
+                        batch_size=64, shuffle=True, num_workers=args['num_workers'],
+                        worker_init_fn=worker_init_fn, drop_last=True)
+                        
+                # Merge test dataset manually or create a concatenated dataloader
+                test_dataset_normal = CS2_dataloader(root_dir=args['root_dir'], mode='Test', modal='RGB', num_segments=args['num_segments'], 
+                        len_feature=1024, list_fname=list_path, idx_list=normal_test_idx, is_normal=True)
+                test_dataset_abnormal = CS2_dataloader(root_dir=args['root_dir'], mode='Test', modal='RGB', num_segments=args['num_segments'], 
+                        len_feature=1024, list_fname=list_path, idx_list=abnormal_test_idx, is_normal=False)
+                
+                test_dataset = data.ConcatDataset([test_dataset_normal, test_dataset_abnormal])
+                test_loader = data.DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=args['num_workers'], worker_init_fn=worker_init_fn)
+
+                test_info = {
+                    "step": [], 
+                    "f1_05": [], "precision_05": [], "ac_05": [], "recall_05": [],
+                    "f1_08": [], "precision_08": [], "ac_08": [], "recall_08": []
+                }
+                
+                best_ac_05 = 0
+                best_f1_05, best_pre_05, best_rec_05 = 0, 0, 0
+                best_ac_08, best_f1_08, best_pre_08, best_rec_08 = 0, 0, 0, 0
 
                 criterion = AD_Loss(frame_window=16)
+                optimizer = torch.optim.Adam(net.parameters(), lr=lr_list[0], betas=(0.9, 0.999), weight_decay=0.00005)
 
-                optimizer = torch.optim.Adam(net.parameters(), lr = config.lr[0],
-                    betas = (0.9, 0.999), weight_decay = 0.00005)
-
-                # 학습
-                for step in tqdm(
-                    range(1, config.num_iters + 1),
-                    total = config.num_iters,
-                    dynamic_ncols = True
-                ):
-                    if step > 1 and config.lr[step - 1] != config.lr[step - 2]:
+                for step in tqdm(range(1, num_iters + 1), total=num_iters, dynamic_ncols=True):
+                    if step > 1 and lr_list[step - 1] != lr_list[step - 2]:
                         for param_group in optimizer.param_groups:
-                            param_group["lr"] = config.lr[step - 1]
+                            param_group["lr"] = lr_list[step - 1]
+                            
                     if (step - 1) % len(normal_train_loader) == 0:
                         normal_loader_iter = iter(normal_train_loader)
-
                     if (step - 1) % len(abnormal_train_loader) == 0:
                         abnormal_loader_iter = iter(abnormal_train_loader)
-                    train(net, normal_loader_iter,abnormal_loader_iter, optimizer, criterion, step)
-                    if step % 5 == 0 and step > 5:
-                        dt_name = test(net, config, test_loader, test_info, step, stride)
-                        with open(f'test_data_name_{stride}_ft{ft}.pickle', 'wb') as f:#
-                            pickle.dump(dt_name, f)#
-                        if test_info["ac"][-1] > best_ac:
-                            best_ac = test_info["ac"][-1]
-                            best_iter = cur_iter
-                            best_f1, best_precision, best_recall = test_info["f1"][-1], test_info["precision"][-1], test_info["recall"][-1]
+                        
+                    train(net, normal_loader_iter, abnormal_loader_iter, optimizer, criterion, step)
+                    
+                    if step % 50 == 0 and step > 5:
+                        acc_05 = test(net, None, test_loader, test_info, step, stride)
+                        
+                        if test_info["ac_05"][-1] > best_ac_05:
+                            best_ac_05 = test_info["ac_05"][-1]
+                            best_f1_05, best_pre_05, best_rec_05 = test_info["f1_05"][-1], test_info["precision_05"][-1], test_info["recall_05"][-1]
+                            best_ac_08, best_f1_08, best_pre_08, best_rec_08 = test_info["ac_08"][-1], test_info["f1_08"][-1], test_info["precision_08"][-1], test_info["recall_08"][-1]
 
-                            save_best_record(test_info, 
-                                os.path.join(config.output_path, "cs2_feat_{}_ft{}_best_record_{}.txt".format(stride, ft, config.seed)))
-
-                            torch.save(net.state_dict(), os.path.join(args['model_path'], \
-                                "cs2_feat_{}_ft{}_{}.pkl".format(stride, ft, config.seed)))
-                        if step == config.num_iters:
-                            torch.save(net.state_dict(), os.path.join(args['model_path'], \
-                                "cs2_feat_{}_ft{}_{}.pkl".format(stride, ft, step)))
-                    cur_iter += 1
+                            os.makedirs(args['output_path'], exist_ok=True)
+                            os.makedirs(args['model_path'], exist_ok=True)
+                            
+                            save_best_record(test_info, os.path.join(args['output_path'], f"cs2_feat_{stride}_ft{ft}_fold{fold_idx}_best_record.txt"))
+                            torch.save(net.state_dict(), os.path.join(args['model_path'], f"cs2_feat_{stride}_ft{ft}_fold{fold_idx}.pkl"))
+                            
+                best_test_dict["acc_05"].append(best_ac_05)
+                best_test_dict["precision_05"].append(best_pre_05)
+                best_test_dict["f1_05"].append(best_f1_05)
+                best_test_dict["recall_05"].append(best_rec_05)
                 
-                best_test_dict["acc"].append(best_ac)
-                best_test_dict["precision"].append(best_precision)
-                best_test_dict["f1"].append(best_f1)
-                best_test_dict["recall"].append(best_recall)
-            print("===== Train & Test Done! =====")
-            print(best_test_dict)
-            with open(f'best_test_dict_{stride}_ft{ft}.pickle', 'wb') as f:
+                best_test_dict["acc_08"].append(best_ac_08)
+                best_test_dict["precision_08"].append(best_pre_08)
+                best_test_dict["f1_08"].append(best_f1_08)
+                best_test_dict["recall_08"].append(best_rec_08)
+                
+            print(f"===== Train & Test Done (FT {ft}, Stride {stride}) =====")
+            
+            # Save 5-fold average summary
+            with open(os.path.join(args['output_path'], f'best_test_dict_{stride}_ft{ft}.pickle'), 'wb') as f:
                 pickle.dump(best_test_dict, f)
+                
+            print(f"Average Accuracy (0.5): {np.mean(best_test_dict['acc_05']):.4f}")
+            print(f"Average Accuracy (0.8): {np.mean(best_test_dict['acc_08']):.4f}")

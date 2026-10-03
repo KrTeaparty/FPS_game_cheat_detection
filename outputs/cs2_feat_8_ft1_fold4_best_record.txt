@@ -1,0 +1,11 @@
+Step: 650
+--- Threshold 0.5 ---
+ac: 1.0000
+f1: 1.0000
+precision: 1.0000
+recall: 1.0000
+--- Threshold 0.8 ---
+ac: 0.9986
+f1: 0.9988
+precision: 1.0000
+recall: 0.9977

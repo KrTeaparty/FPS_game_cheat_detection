@@ -32,17 +32,18 @@ var/
 
 # Large Model / Data Files
 *.pth
+!fc_weights.pth
 *.pt
 *.ckpt
 
 # Project specifics
 raw_data/
+
 # Feature directories filtering
 cs2_feat_*/
 compressed_features/*
-!compressed_features/cs2_feat_8_ft0.z*
-!compressed_features/cs2_feat_8_ft0.zip
-outputs/
+!compressed_features/cs2_feat_all.z*
+!compressed_features/cs2_feat_all.zip
 backup_before_cleaning/
 
 # Data directory filtering
@@ -56,5 +57,4 @@ list/*
 
 # Models directory filtering
 models/*
-!models/cs2_feat_8_ft*[^_]_2025.pkl
-!models/cs2_feat_16_ft*[^_]_2025.pkl
+!models/cs2_feat_*_fold*.pkl
